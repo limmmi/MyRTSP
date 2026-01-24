@@ -1,0 +1,258 @@
+Linux WSL1 Ubuntu20
+C++ 17 GUN
+点播
+线程池 + I/O多路复用 (参考 TinyWebServer)
+RTSP (控制 TCP)
+视频
+RTP   (数据 UDP)
+RTCP (客户端周期反馈传输质量 UDP)
+音频
+RTP   (数据 UDP)
+RTCP (客户端周期反馈传输质量 UDP)
+
+应用层：RTSP协议解析
+    ↓
+业务层：会话管理、状态机
+    ↓
+网络层：ET模式 + 非阻塞IO + 缓冲区 + reactor模式(线程池子线程读取缓冲区数据)
+    ↓
+传输层：TCP/UDP (RTP/RTCP)
+
+模块
+1, 线程池
+2, 日志(spdlog)
+3, 定时器
+4, 配置管理Json解析(jsoncpp)
+5, 读取H264文件并分帧
+6, 网络I/O,线程池 + I/O多路复用
+7, 会话管理,维护每个用户连接的状态
+8, RTSP协议解析(需要扩展jwt-token认证,URL参数传递Token)
+	(没有认证服务器,如果需要开启认证需要一个认证服务器)
+9, RTP封装发送
+10, 路由器(url路由到对应资源)
+11, 解析命令行参数
+
+rtsp://192.168.1.100:8554/video?token=eyJhbGciOiJIkpXVCJ9...
+
+命令行参数
+
+参数	类型	默认值	说明
+--rtsp-port	int	8554	RTSP服务监听端口
+--rtsp-host	string	0.0.0.0	监听地址（0.0.0.0表示所有网卡）
+--rtp-port-range	string	10000-20000	RTP/RTCP端口池范围
+--max-connections	int	1000	最大并发连接数
+
+--auth-enabled	bool	false	是否开启认证
+--auth-type	string	jwt	认证类型：jwt/basic/digest/none
+--jwt-secret	string	-	JWT密钥（必须配置）
+--jwt-expire	int	3600	Token有效期（秒）
+--jwt-refresh-enabled	bool	true	是否支持Token刷新
+--auth-api-port	int	8080	HTTP认证API端口
+--auth-api-enabled	bool	true	是否启用HTTP认证接口
+
+--log-level	string	info	日志级别：trace/debug/info/warn/error/fatal/off
+--log-dir	string	./logs	日志目录
+--log-file	string	rtsp-server.log	日志文件名
+--log-max-size	int	100	单个日志文件最大大小（MB）
+--log-max-files	int	10	保留的日志文件数量
+--log-to-console	bool	true	是否输出到控制台
+
+--media-dir	string	./media	媒体文件目录
+--video-dir	string	./media/videos	视频文件目录
+--audio-dir	string	./media/audios	音频文件目录
+
+--thread-pool-size	int	8	线程池线程数
+--worker-threads	int	4	工作线程数
+--session-timeout	int	60	会话超时时间（秒）
+--buffer-size	int	8192	UDP缓冲区大小（字节）
+--tcp-keepalive	bool	true	是否开启TCP KeepAlive
+--tcp-keepalive-time	int	60	TCP保活时间（秒）
+
+--config-file string "config.json" 读取配置文件(代替命令行参数)
+ 
+rtsp-server/
+├── README.md                    # 项目说明
+├── CMakeLists.txt              # CMake构建配置
+├── .gitignore                  # Git忽略文件
+│
+├── src/                        # 源代码目录
+│   ├── main.cc                 # 主程序入口
+│   │
+│   ├── core/                   # 核心模块
+│   │   ├── server.cc           # RTSP服务器主类
+│   │   ├── config.cc           # 配置管理
+│   │   └── signal.cc           # 信号处理
+│   │
+│   ├── network/                # 网络通信模块
+│   │   ├── epoll_manager.cc    # epoll事件管理
+│   │   ├── socket_manager.cc   # Socket管理
+│   │   └── connection.cc       # 连接封装
+│   │
+│   ├── protocol/               # 协议处理模块
+│   │   ├── rtsp_parser.cc     # RTSP协议解析
+│   │   ├── rtsp_builder.cc     # RTSP响应构建
+│   │   ├── rtp_packet.cc      # RTP包封装
+│   │   └── sdp_generator.cc    # SDP生成
+│   │
+│   ├── session/                # 会话管理模块
+│   │   ├── session_manager.cc # 会话管理器
+│   │   ├── session.cc         # 会话类
+│   │   └── port_pool.cc       # 端口池管理
+│   │
+│   ├── media/                  # 媒体处理模块
+│   │   ├── h264_parser.cc     # H264解析器
+│   │   ├── h264_encoder.cc    # H264编码器（转码用）
+│   │   ├── video_sender.cc    # 视频发送器
+│   │   └── audio_sender.cc    # 音频发送器
+│   │
+│   ├── auth/                   # 认证授权模块
+│   │   ├── authenticator.cc    # 认证器（JWT/Digest）
+│   │   ├── jwt_validator.cc   # JWT验证器
+│   │   ├── permission.cc      # 权限控制
+│   │   └── token_cache.cc     # Token缓存（黑名单）
+│   │
+│   ├── utils/                  # 工具类模块
+│   │   ├── logger.cc          # 日志封装
+│   │   ├── thread_pool.cc     # 线程池
+│   │   ├── timer.cc           # 定时器
+│   │   ├── string_utils.cc    # 字符串工具
+│   │   └── time_utils.cc      # 时间工具
+│   │
+│   ├── storage/                # 存储模块
+│   │   ├── database.cc        # 数据库封装
+│   │   ├── redis_client.cc    # Redis客户端
+│   │   └── file_storage.cc    # 文件存储管理
+│   │
+│   ├── api/                    # HTTP API模块（管理接口）
+│   │   ├── api_server.cc      # HTTP服务器
+│   │   ├── handlers.cc        # API处理器
+│   │   └── middleware.cc       # API中间件
+│   │
+│   └── monitor/                # 监控统计模块
+│       ├── metrics.cc         # Prometheus指标
+│       ├── statistics.cc      # 统计数据
+│       └── health_check.cc    # 健康检查
+│
+├── include/                   # 头文件目录
+│   ├── core/
+│   │   ├── server.h
+│   │   ├── config.h
+│   │   └── signal.h
+│   ├── network/
+│   │   ├── epoll_manager.h
+│   │   ├── socket_manager.h
+│   │   └── connection.h
+│   ├── protocol/
+│   │   ├── rtsp_parser.h
+│   │   ├── rtsp_builder.h
+│   │   ├── rtp_packet.h
+│   │   └── sdp_generator.h
+│   ├── session/
+│   │   ├── session_manager.h
+│   │   ├── session.h
+│   │   └── port_pool.h
+│   ├── media/
+│   │   ├── h264_parser.h
+│   │   ├── h264_encoder.h
+│   │   ├── video_sender.h
+│   │   └── audio_sender.h
+│   ├── auth/
+│   │   ├── authenticator.h
+│   │   ├── jwt_validator.h
+│   │   ├── permission.h
+│   │   └── token_cache.h
+│   ├── utils/
+│   │   ├── logger.h
+│   │   ├── thread_pool.h
+│   │   ├── timer.h
+│   │   ├── string_utils.h
+│   │   └── time_utils.h
+│   ├── storage/
+│   │   ├── database.h
+│   │   ├── redis_client.h
+│   │   └── file_storage.h
+│   ├── api/
+│   │   ├── api_server.h
+│   │   ├── handlers.h
+│   │   └── middleware.h
+│   └── monitor/
+│       ├── metrics.h
+│       ├── statistics.h
+│       └── health_check.h
+│
+├── tests/                     # 测试代码目录
+│   ├── unit/                  # 单元测试
+│   │   ├── test_rtp_packet.cc
+│   │   ├── test_rtsp_parser.cc
+│   │   ├── test_jwt_validator.cc
+│   │   └── test_config.cc
+│   ├── integration/           # 集成测试
+│   │   ├── test_rtsp_server.cc
+│   │   └── test_auth_flow.cc
+│   └── performance/           # 性能测试
+│       └── bench_concurrent.cc
+│
+├── config/                    # 配置文件目录
+│   ├── server.yaml            # 主配置文件
+│   ├── server.dev.yaml        # 开发环境配置
+│   ├── server.prod.yaml       # 生产环境配置
+│   └── logging.yaml           # 日志配置
+│
+├── scripts/                   # 脚本目录
+│   ├── build.sh              # 编译脚本
+│   ├── install.sh            # 安装脚本
+│   ├── start.sh              # 启动脚本
+│   ├── stop.sh               # 停止脚本
+│   ├── restart.sh            # 重启脚本
+│   └── deploy.sh             # 部署脚本
+│
+├── media/                     # 媒体文件目录
+│   ├── videos/               # 视频文件
+│   ├── audio/                # 音频文件
+│   └── thumbnails/           # 缩略图
+│
+├── logs/                      # 日志目录
+│   ├── rtsp-server.log       # 主日志
+│   ├── access.log            # 访问日志
+│   └── error.log             # 错误日志
+│
+├── data/                      # 数据目录
+│   ├── rtsp.db               # SQLite数据库
+│   └── stats.json            # 统计数据
+│
+├── build/                     # 构建输出目录
+│   ├── bin/                  # 可执行文件
+│   │   └── rtsp-server
+│   ├── lib/                  # 静态/动态库
+│   └── obj/                  # 目标文件
+│
+├── third_party/               # 第三方库
+│   ├── jwt-cpp/              # JWT库
+│   ├── spdlog/               # 日志库
+│   ├── nlohmann_json/        # JSON库
+│   └── yaml-cpp/             # YAML库
+│
+├── docs/                      # 文档目录
+│   ├── api.md                # API文档
+│   ├── architecture.md       # 架构文档
+│   ├── deployment.md         # 部署文档
+│   └── troubleshooting.md    # 故障排查
+│
+├── docker/                    # Docker相关
+│   ├── Dockerfile            # Docker镜像
+│   ├── docker-compose.yml    # Docker Compose
+│   └── docker-entrypoint.sh # Docker启动脚本
+│
+└── k8s/                       # Kubernetes部署
+    ├── deployment.yaml       # 部署配置
+    ├── service.yaml          # 服务配置
+    ├── configmap.yaml        # 配置映射
+    └── ingress.yaml          # Ingress配置
+
+
+
+
+
+
+
+

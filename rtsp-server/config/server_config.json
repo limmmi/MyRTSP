@@ -1,0 +1,43 @@
+{
+  "rtsp": {
+    "port": 8554,
+    "host": "0.0.0.0"
+  },
+  "rtp": {
+    "port_min": 10000,
+    "port_max": 20000
+  },
+  "connection": {
+    "max_connections": 1000,
+    "session_timeout": 60,
+    "buffer_size": 8192,
+    "tcp_keepalive": true,
+    "tcp_keepalive_time": 60
+  },
+  "auth": {
+    "enabled": false,
+    "type": "jwt",
+    "jwt_secret": "",
+    "jwt_expire": 3600,
+    "jwt_refresh_enabled": true,
+    "api_port": 8080,
+    "api_enabled": true
+  },
+  "logging": {
+    "level": "info",
+    "dir": "./logs",
+    "file": "rtsp-server.log",
+    "max_size": 100,
+    "max_files": 10,
+    "to_console": true
+  },
+  "media": {
+    "dir": "./media",
+    "video_dir": "./media/videos",
+    "audio_dir": "./media/audios"
+  },
+  "thread_pool": {
+    "size": 8,
+    "worker_threads": 4
+  }
+}
