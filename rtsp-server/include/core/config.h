@@ -45,8 +45,7 @@ public:
     std::string audio_dir = "./media/audios";
 
     // 线程池配置
-    int thread_pool_size = 8;
-    int worker_threads = 4;
+    int thread_num = 8;
 
     // 配置文件路径
     std::string config_file = "../config/server_config.json";
@@ -61,10 +60,7 @@ public:
     bool SaveToFile(const std::string& filename);
 
 private:
-    ServerConfig() = default;
-    ~ServerConfig() = default;
-    ServerConfig(const ServerConfig&) = delete;
-    ServerConfig& operator=(const ServerConfig&) = delete;
+
 };
 
 #endif

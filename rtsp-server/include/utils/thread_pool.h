@@ -1,148 +1,140 @@
 #ifndef THREADPOOL_H
 #define THREADPOOL_H
 
-#include <list>
-#include <cstdio>
-#include <exception>
-#include <pthread.h>
+#include <vector>
+#include <queue>
+#include <thread>
 #include <mutex>
-#include <semaphore.h>
-template <typename T>
-class threadpool
-{
+#include <condition_variable>
+#include <functional>
+#include <future>
+#include <memory>
+#include <atomic>
+
+/**
+ * ThreadPool 类：通用线程池实现
+ * 支持异步任务提交和结果获取
+ */
+class ThreadPool {
 public:
-    /*thread_number是线程池中线程的数量，max_requests是请求队列中最多允许的、等待处理的请求的数量*/
-    threadpool(int thread_number = 8, int max_request = 10000);
-    ~threadpool();
-    bool append(T *request, int state);  // state 读为0, 写为1
+    /**
+     * 构造函数：创建线程池
+     * @param thread_count 线程数量，默认为4
+     */
+    explicit ThreadPool(size_t thread_count = 4);
+    
+    /**
+     * 析构函数：等待所有任务完成后销毁线程池
+     */
+    ~ThreadPool();
+
+    // 禁止拷贝构造和拷贝赋值
+    ThreadPool(const ThreadPool&) = delete;
+    ThreadPool& operator=(const ThreadPool&) = delete;
+
+    /**
+     * 提交任务到线程池
+     * @param func 可调用对象（函数、lambda等）
+     * @param Args 函数参数
+     * @return 返回future对象，用于获取任务结果
+     */
+    template<typename Func, typename... Args>
+    auto enqueue(Func&& func, Args&&... args) 
+        -> std::future<typename std::result_of<Func(Args...)>::type>;
+
+    /**
+     * 获取线程池大小
+     * @return 线程数量
+     */
+    size_t size() const;
+
+    /**
+     * 获取当前待处理任务数量
+     * @return 任务队列长度
+     */
+    size_t pending_tasks() const;
+
+    /**
+     * 停止线程池（不再接受新任务）
+     */
+    void stop();
 
 private:
-    /*工作线程运行的函数，它不断从工作队列中取出任务并执行之*/
-    static void *worker(void *arg);
+    /**
+     * 工作线程函数
+     */
+    void worker();
+
+    /**
+     * 执行任务队列中的任务
+     */
     void run();
 
 private:
-    int m_thread_number;        //线程池中的线程数
-    int m_max_requests;         //请求队列中允许的最大请求数
-    pthread_t *m_threads;       //描述线程池的数组，其大小为m_thread_number
-    std::list<T *> m_workqueue; //请求队列
-    std::mutex m_queuelocker;  //请求队列的互斥锁
-    sem m_queuestat;            //是否有任务需要处理
+    // 工作线程列表
+    std::vector<std::thread> workers_;
+    
+    // 任务队列（使用std::function实现通用任务）
+    struct Task {
+        virtual ~Task() {}
+        virtual void execute() = 0;
+    };
+    
+    template<typename Func>
+    struct TaskImpl : Task {
+        Func func_;
+        TaskImpl(Func&& func) : func_(std::forward<Func>(func)) {}
+        void execute() override { func_(); }
+    };
+    
+    std::queue<std::unique_ptr<Task>> tasks_;
+    
+    // 任务队列互斥锁
+    mutable std::mutex queue_mutex_;
+    
+    // 条件变量（用于任务通知）
+    std::condition_variable condition_;
+    
+    // 线程池停止标志
+    std::atomic<bool> stop_;
+    
+    // 线程数量
+    size_t thread_count_;
 };
-template <typename T>
-threadpool<T>::threadpool( int thread_number, int max_requests) :m_thread_number(thread_number), m_max_requests(max_requests), m_threads(NULL),m_connPool(connPool)
+
+// 模板方法实现
+template<typename Func, typename... Args>
+auto ThreadPool::enqueue(Func&& func, Args&&... args)
+    -> std::future<typename std::result_of<Func(Args...)>::type>
 {
-    if (thread_number <= 0 || max_requests <= 0)
-        throw std::exception();
-    m_threads = new pthread_t[m_thread_number];
-    if (!m_threads)
-        throw std::exception();
-    for (int i = 0; i < thread_number; ++i)
+    // 定义返回类型
+    using ReturnType = typename std::result_of<Func(Args...)>::type;
+    
+    // 创建共享状态（promise + task）
+    auto task = std::make_shared<std::packaged_task<ReturnType()>>(
+        std::bind(std::forward<Func>(func), std::forward<Args>(args)...)
+    );
+    
+    std::future<ReturnType> result = task->get_future();
+    
     {
-        if (pthread_create(m_threads + i, NULL, worker, this) != 0)
-        {
-            delete[] m_threads;
-            throw std::exception();
+        std::unique_lock<std::mutex> lock(queue_mutex_);
+        
+        // 如果线程池已停止，抛出异常
+        if (stop_) {
+            throw std::runtime_error("enqueue on stopped ThreadPool");
         }
-        if (pthread_detach(m_threads[i]))
-        {
-            delete[] m_threads;
-            throw std::exception();
-        }
+        
+        // 将任务添加到队列
+        tasks_.emplace([task]() {
+            (*task)();
+        });
     }
+    
+    // 通知一个工作线程
+    condition_.notify_one();
+    
+    return result;
 }
-template <typename T>
-threadpool<T>::~threadpool()
-{
-    delete[] m_threads;
-}
-template <typename T>
-bool threadpool<T>::append(T *request, int state)
-{
-    m_queuelocker.lock();
-    if (m_workqueue.size() >= m_max_requests)
-    {
-        m_queuelocker.unlock();
-        return false;
-    }
-    request->m_state = state;
-    m_workqueue.push_back(request);
-    m_queuelocker.unlock();
-    m_queuestat.post();
-    return true;
-}
-template <typename T>
-bool threadpool<T>::append_p(T *request)
-{
-    m_queuelocker.lock();
-    if (m_workqueue.size() >= m_max_requests)
-    {
-        m_queuelocker.unlock();
-        return false;
-    }
-    m_workqueue.push_back(request);
-    m_queuelocker.unlock();
-    m_queuestat.post();
-    return true;
-}
-template <typename T>
-void *threadpool<T>::worker(void *arg)
-{
-    threadpool *pool = (threadpool *)arg;
-    pool->run();
-    return pool;
-}
-template <typename T>
-void threadpool<T>::run()
-{
-    while (true)
-    {
-        m_queuestat.wait();
-        m_queuelocker.lock();
-        if (m_workqueue.empty())
-        {
-            m_queuelocker.unlock();
-            continue;
-        }
-        T *request = m_workqueue.front();
-        m_workqueue.pop_front();
-        m_queuelocker.unlock();
-        if (!request)
-            continue;
-        if (1 == m_actor_model)
-        {
-            if (0 == request->m_state)
-            {
-                if (request->read_once())
-                {
-                    request->improv = 1;
-                    connectionRAII mysqlcon(&request->mysql, m_connPool);
-                    request->process();
-                }
-                else
-                {
-                    request->improv = 1;
-                    request->timer_flag = 1;
-                }
-            }
-            else
-            {
-                if (request->write())
-                {
-                    request->improv = 1;
-                }
-                else
-                {
-                    request->improv = 1;
-                    request->timer_flag = 1;
-                }
-            }
-        }
-        else
-        {
-            connectionRAII mysqlcon(&request->mysql, m_connPool);
-            request->process();
-        }
-    }
-}
-#endif
+
+#endif // THREADPOOL_H
